@@ -333,12 +333,12 @@ typedef void * lv_indev_drv_user_data_t;            /*Type of user data in the i
  *                                LV_FONT_DECLARE(my_font_2)
  */
 #ifndef LV_FONT_CUSTOM_DECLARE
-#define LV_FONT_CUSTOM_DECLARE // LV_FONT_DECLARE(lv_font_heb_16)
+#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(lv_font_heb_16)
 #endif // LV_FONT_CUSTOM_DECLARE
 
 /*Always set a default font from the built-in fonts*/
 #ifndef LV_FONT_DEFAULT
-#define LV_FONT_DEFAULT        &lv_font_roboto_16
+#define LV_FONT_DEFAULT        &lv_font_heb_16 // &lv_font_roboto_16
 #endif  // LV_FONT_DEFAULT
 
 /* Enable it if you have fonts with a lot of characters.
