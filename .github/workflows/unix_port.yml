@@ -27,7 +27,7 @@ jobs:
       working-directory: ./lib/lv_bindings
       run: |
         git fetch
-        git checkout $GITHUB_SHA
+        git checkout $GITHUB_SHA || git checkout ${{ github.event.pull_request.head.sha }}
     - name: Build mpy-cross
       run: make -j $(nproc) -C mpy-cross
     - name: Build the unix port
