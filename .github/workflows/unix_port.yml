@@ -26,6 +26,8 @@ jobs:
     - name: Checkout lv_bindings
       working-directory: ./lib/lv_bindings
       run: |
+        git status
+        git remote -vv
         git fetch ${{ github.event.repository.git_url }}
         git fetch ${{ github.event.pull_request.head.repo.clone_url }}
         git checkout ${{ github.sha }} || git checkout ${{ github.event.pull_request.head.sha }}
