@@ -27,9 +27,9 @@ jobs:
       working-directory: ./lib/lv_bindings
       run: |
         git status
-        git remote -vv
-        git fetch ${{ github.event.repository.git_url }}
-        git fetch ${{ github.event.pull_request.head.repo.clone_url }}
+        git remote -vv        
+        git fetch ${{ github.event.repository.git_url }} "+refs/heads/*:refs/remotes/origin/*+refs/pull/*/head:refs/remotes/origin/pr/*"
+        git fetch ${{ github.event.pull_request.head.repo.clone_url }} "+refs/heads/*:refs/remotes/origin/*+refs/pull/*/head:refs/remotes/origin/pr/*"
         git checkout ${{ github.sha }} || git checkout ${{ github.event.pull_request.head.sha }}
     - name: Build mpy-cross
       run: make -j $(nproc) -C mpy-cross
