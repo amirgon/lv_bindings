@@ -127,10 +127,10 @@ def remove_quals(ast):
 def remove_explicit_struct(ast):
     if isinstance(ast, c_ast.TypeDecl) and isinstance(ast.type, c_ast.Struct):
         explicit_struct_name = ast.type.name
-        # eprint('--> replace %s by %s in:\n%s' % (explicit_struct_name, explicit_structs[explicit_struct_name] if explicit_struct_name in explicit_structs else '???', ast))
+        # eprint('--> replace %s by %s in:\n%s' % (explicit_struct_name, explicit_structs[explicit_struct_name].declname if explicit_struct_name in explicit_structs else '???', ast))
         if explicit_struct_name:
             if explicit_struct_name in explicit_structs:
-                ast.type = c_ast.IdentifierType([explicit_structs[explicit_struct_name]])
+                ast.type = c_ast.IdentifierType([explicit_structs[explicit_struct_name].declname])
             elif explicit_struct_name in structs:
                 ast.type = c_ast.IdentifierType([explicit_struct_name])
     if isinstance(ast, tuple):
@@ -154,7 +154,7 @@ def get_name(type):
     if isinstance(type, c_ast.Decl):
         return type.name
     if isinstance(type, c_ast.Struct) and type.name and type.name in explicit_structs:
-        return explicit_structs[type.name]
+        return explicit_structs[type.name].declname
     if isinstance(type, c_ast.Struct):
         return type.name
     if isinstance(type, c_ast.TypeDecl):
@@ -286,7 +286,7 @@ def is_global_callback(arg_type):
 
 # We consider union as a struct, for simplicity
 def is_struct(type):
-    return isinstance(type, c_ast.Struct) or isinstance(type, c_ast.Union)
+    return (isinstance(type, c_ast.Struct) or isinstance(type, c_ast.Union)) and type.decls
 
 obj_metadata = collections.OrderedDict()
 func_metadata = collections.OrderedDict()
@@ -301,15 +301,26 @@ ast = parser.parse(s, filename='<none>')
 # Types and structs
 
 typedefs = [x.type for x in ast.ext if isinstance(x, c_ast.Typedef)] # and not (hasattr(x.type, 'declname') and lv_base_obj_pattern.match(x.type.declname))]
-# eprint('... %s' % str(typedefs))
+typedefs_ast = collections.OrderedDict((typedef.declname, typedef) for typedef in typedefs if hasattr(typedef, 'declname'))
+# print('/* %s */' % str(typedefs))
+synonym = {}
+for t in typedefs:
+    if isinstance(t, c_ast.TypeDecl) and isinstance(t.type, c_ast.IdentifierType):
+        synonym[t.declname] = t.type.names[0]
+        # eprint('%s === %s' % (t.declname, t.type.names[0]))
+    if isinstance(t, c_ast.TypeDecl) and isinstance(t.type, c_ast.Struct):
+        synonym[t.declname] = t.type.name
+        # eprint('%s === struct %s' % (t.declname, t.type.name))
 struct_typedefs = [typedef for typedef in typedefs if is_struct(typedef.type)]
 structs = collections.OrderedDict((typedef.declname, typedef.type) for typedef in struct_typedefs if typedef.declname and typedef.type.decls) # and not lv_base_obj_pattern.match(typedef.declname)) 
+struct_names = [s for s in structs] + [s for s in synonym if synonym[s] in structs]
 structs_without_typedef = collections.OrderedDict((decl.type.name, decl.type) for decl in ast.ext if hasattr(decl, 'type') and is_struct(decl.type))
 structs.update(structs_without_typedef) # This is for struct without typedef
-explicit_structs = collections.OrderedDict((typedef.type.name, typedef.declname) for typedef in struct_typedefs if typedef.type.name) # and not lv_base_obj_pattern.match(typedef.type.name))
+explicit_structs = collections.OrderedDict((typedef.type.name, typedef) for typedef in struct_typedefs if typedef.type.name) # and not lv_base_obj_pattern.match(typedef.type.name))
 # print('/* --> structs:\n%s */' % ',\n'.join(sorted(str(structs[struct_name]) for struct_name in structs if struct_name)))
+# print('/* --> struct_names: %s */' % struct_names)
 # print('/* --> structs_without_typedef:\n%s */' % ',\n'.join(sorted(str(structs_without_typedef[struct_name]) for struct_name in structs_without_typedef if struct_name)))
-# print('/* --> explicit_structs:\n%s */' % ',\n'.join(sorted(str(explicit_structs[struct_name]) for struct_name in explicit_structs if struct_name)))
+# print('/* --> explicit_structs:\n%s */' % ',\n'.join(sorted(str(explicit_structs[struct_name].declname) for struct_name in explicit_structs if struct_name)))
 # eprint('/* --> structs without typedef:\n%s */' % ',\n'.join(sorted(str(structs[struct_name]) for struct_name in structs_without_typedef)))
 
 # Functions and objects
@@ -366,15 +377,20 @@ def get_struct_functions(struct_name):
     # eprint("get_struct_functions %s: %s" % (struct_name, [get_type(func.type.args.params[0].type.type, remove_quals = True) for func in funcs if func.name.startswith(base_struct_name)]))
     # eprint("get_struct_functions %s: %s" % (struct_name, struct_aliases[struct_name] if struct_name in struct_aliases else ""))
 
-    # for func in funcs:
-    #     print("/* get_struct_functions: func=%s, struct=%s, noncommon part=%s */" % (simplify_identifier(func.name), simplify_identifier(struct_name),
-    #         noncommon_part(simplify_identifier(func.name), simplify_identifier(struct_name))))
-
     reverse_aliases = [alias for alias in struct_aliases if struct_aliases[alias] == struct_name]
-    
+
+    # for func in funcs:
+    #     print("/* get_struct_functions: func=%s, struct=%s, noncommon part=%s get_first_arg_type(func)=%s, struct_name in struct_names=%s, reverse_aliases=%s */" % (
+    #         simplify_identifier(func.name),
+    #         struct_name,
+    #         noncommon_part(simplify_identifier(func.name), simplify_identifier(struct_name)),
+    #         get_first_arg_type(func),
+    #         struct_name in struct_names,
+    #         reverse_aliases))
+
     return ([func for func in funcs \
             if noncommon_part(simplify_identifier(func.name), simplify_identifier(struct_name)) != simplify_identifier(func.name) \
-            and get_first_arg_type(func) == struct_name] if (struct_name in structs or len(reverse_aliases) > 0) else []) + \
+            and get_first_arg_type(func) == struct_name] if (struct_name in struct_names or len(reverse_aliases) > 0) else []) + \
             (get_struct_functions(struct_aliases[struct_name]) if struct_name in struct_aliases else [])
 
 @memoize
@@ -1339,7 +1355,7 @@ def decl_to_callback(decl):
 def get_user_data(func, func_name = None, containing_struct = None, containing_struct_name = None):
     args = func.args.params
     if not func_name: func_name = get_arg_name(func.type)
-    # print('/* --> callback: func_name = %s, args = %s */' % (func_name, repr(args)))
+    print('/* --> callback: func_name = %s, args = %s */' % (func_name, repr(args)))
     user_data_found = False
     user_data = 'None'
     if len(args) > 0 and isinstance(args[0].type, c_ast.PtrDecl):
@@ -1348,14 +1364,17 @@ def get_user_data(func, func_name = None, containing_struct = None, containing_s
         # else:
         #     struct_arg_type_name = get_type(args[0].type.type, remove_quals = True)
         struct_arg_type_name = get_type(args[0].type.type, remove_quals = True)
-        # print('/* --> get_user_data: containing_struct_name = %s, struct_arg_type_name = %s */' % (containing_struct_name, struct_arg_type_name))
+        print('/* --> get_user_data: containing_struct_name = %s, struct_arg_type_name = %s */' % (containing_struct_name, struct_arg_type_name))
         if containing_struct_name and struct_arg_type_name != containing_struct_name:
             return None
         if not containing_struct:
             try_generate_type(args[0].type)
             if struct_arg_type_name in structs:
                 containing_struct = structs[struct_arg_type_name] 
-                # print('/* --> containing_struct = %s */' % containing_struct)
+            elif struct_arg_type_name in synonym and synonym[struct_arg_type_name] in structs:
+                containing_struct = structs[synonym[struct_arg_type_name]]
+
+            print('/* --> containing_struct = %s */' % containing_struct)
             # if struct_arg_type_name in mp_to_lv:
             #     print('/* --> callback: %s First argument is %s */' % (gen.visit(func), struct_arg_type_name))
         if containing_struct:
@@ -1391,12 +1410,15 @@ def try_generate_struct(struct_name, struct):
     global lv_to_mp
     global mp_to_lv
     if struct_name in generated_structs: return None
+    if struct_name.startswith('_') or (struct.name and struct.name.startswith('_')):
+        print("/* Struct %s is private! */" % struct_name)
+        return None
     sanitized_struct_name = sanitize(struct_name)
     generated_structs[struct_name] = False # Starting generating a struct
     # print("/* Starting generating %s */" % struct_name)
     if struct_name in mp_to_lv:
         return mp_to_lv[struct_name]
-    # print('/* --> try_generate_struct %s: %s\n%s */' % (struct_name, gen.visit(struct), struct))
+    print('/* --> try_generate_struct %s: %s\n%s */' % (struct_name, gen.visit(struct), struct))
     if not struct.decls:
         if struct_name == struct.name:
             return None
@@ -1427,6 +1449,9 @@ def try_generate_struct(struct_name, struct):
             # eprint("[%s] %s or %s : %s" % (isinstance(decl.type,c_ast.PtrDecl), type_name, get_type(decl.type), decl.type))
             if type_name in generated_structs:
                 print("/* Already started generating %s! skipping field '%s' */" % (type_name, decl.name))
+                continue
+            if type_name.startswith('_'):
+                print("/* %s is private. Skipping field '%s' */" % (type_name, decl.name))
                 continue
             raise MissingConversionException('Missing conversion to %s when generating struct %s.%s' % (type_name, struct_name, get_name(decl)))             
 
@@ -1661,29 +1686,60 @@ def get_arg_name(arg):
 
 # print("// Typedefs: " + ", ".join(get_arg_name(t) for t in typedefs))
 
+
+def clone_type(type, from_type):
+    # print('/* Cloning type %s from %s */' % (type, from_type))
+    mp_to_lv[type] = mp_to_lv[from_type]
+    type_ptr = '%s *' % type
+    from_type_ptr = '%s *' % from_type
+    const_type_ptr = 'const %s' % type_ptr
+    from_const_type_ptr = 'const %s' % from_type_ptr
+    if from_type_ptr in mp_to_lv:
+        mp_to_lv[type_ptr] = mp_to_lv[from_type_ptr]
+    if from_const_type_ptr in mp_to_lv:
+        mp_to_lv[const_type_ptr] = mp_to_lv[from_const_type_ptr]
+    if from_type in lv_to_mp:
+        lv_to_mp[type] = lv_to_mp[from_type]
+        lv_mp_type[type] = lv_mp_type[from_type]
+        if from_type in lv_to_mp_funcptr:
+            lv_to_mp_funcptr[type] = lv_to_mp_funcptr[from_type]
+        if from_type in lv_to_mp_byref:
+            lv_to_mp_byref[type] = lv_to_mp_byref[from_type]
+        if from_type_ptr in lv_to_mp:
+            lv_to_mp[type_ptr] = lv_to_mp[from_type_ptr]
+        if from_type_ptr in lv_mp_type:
+            lv_mp_type[type_ptr] = lv_mp_type[from_type_ptr]
+        if from_const_type_ptr in lv_to_mp:
+            lv_to_mp[const_type_ptr] = lv_to_mp[from_const_type_ptr]
+        if from_const_type_ptr in lv_mp_type:
+            lv_mp_type[const_type_ptr] = lv_mp_type[from_const_type_ptr]
+
 def try_generate_type(type_ast):
-    # eprint(' --> try_generate_type %s : %s' % (get_name(type_ast), gen.visit(type_ast)))
+    eprint(' --> try_generate_type %s : %s' % (get_name(type_ast), gen.visit(type_ast)))
     # print('/* --> try_generate_type %s: %s */' % (get_name(type_ast), type_ast))
     if isinstance(type_ast, str): raise SyntaxError('Internal error! try_generate_type argument is a string.')
-    # Handle the case of a pointer 
     if isinstance(type_ast, c_ast.TypeDecl): 
         return try_generate_type(type_ast.type)
     type = get_name(type_ast)
+    # Handle enums
     if isinstance(type_ast, c_ast.Enum):
         mp_to_lv[type] = mp_to_lv['int']
         lv_to_mp[type] = lv_to_mp['int']
         lv_mp_type[type] = 'int'
         return mp_to_lv[type]
+    # Handle trivial cases
     if type in mp_to_lv:
         return mp_to_lv[type]
+    # Handle the case of an array
     if isinstance(type_ast, c_ast.ArrayDecl) and try_generate_array_type(type_ast):
         return mp_to_lv[type]
+    # Handle the case of a pointer
     if isinstance(type_ast, (c_ast.PtrDecl, c_ast.ArrayDecl)): 
         type = get_name(type_ast.type.type)
         ptr_type = get_type(type_ast, remove_quals=True)
         # print('/* --> try_generate_type IS PtrDecl!! %s: %s */' % (type, type_ast))
         if (type in structs):
-            try_generate_struct(type, structs[type]) if type in structs else None
+            try_generate_struct(type, structs[type])
         if isinstance(type_ast.type, c_ast.TypeDecl) and isinstance(type_ast.type.type, c_ast.Struct) and (type_ast.type.type.name in structs):
             try_generate_struct(type, structs[type_ast.type.type.name])
         if isinstance(type_ast.type, c_ast.FuncDecl):
@@ -1714,6 +1770,13 @@ def try_generate_type(type_ast):
                 lv_mp_type[ptr_type] = 'function pointer'
             except MissingConversionException as exp:
                 gen_func_error(func, exp)
+        # Handle the case of a struct synonym
+        if type in synonym and synonym[type] in typedefs_ast:
+            synonym_ast = typedefs_ast[synonym[type]]
+            # print('/* Synonym %s == %s --> %s */' % (type, synonym[type], synonym_ast))
+            if isinstance(synonym_ast.type, c_ast.Struct):
+                if try_generate_struct(type, synonym_ast.type):
+                    clone_type(synonym[type], type)
         # print('/* --> PTR %s */' % ptr_type)
         if not ptr_type in mp_to_lv: mp_to_lv[ptr_type] = mp_to_lv['void *']
         if not ptr_type in lv_to_mp: lv_to_mp[ptr_type] = lv_to_mp['void *']
@@ -1722,6 +1785,13 @@ def try_generate_type(type_ast):
     if type in structs:
         if try_generate_struct(type, structs[type]):
             return mp_to_lv[type]
+    # Handle the case of a struct synonym
+    if type in synonym and synonym[type] in typedefs_ast:
+        synonym_ast = typedefs_ast[synonym[type]]
+        # print('/* Synonym %s == %s --> %s */' % (type, synonym[type], synonym_ast))
+        if isinstance(synonym_ast.type, c_ast.Struct):
+            if try_generate_struct(type, synonym_ast.type):
+                clone_type(synonym[type], type)
     for new_type_ast in [x for x in typedefs if get_arg_name(x) == type]:
         new_type = get_type(new_type_ast, remove_quals=True)
         if isinstance(new_type_ast, c_ast.TypeDecl) and isinstance(new_type_ast.type, c_ast.Struct) and not new_type_ast.type.decls:
@@ -1737,22 +1807,7 @@ def try_generate_type(type_ast):
                     struct_aliases[new_type] = type
         if type != new_type and try_generate_type(new_type_ast):
            # eprint('/* --> try_generate_type TYPEDEF!! %s: %s */' % (type, mp_to_lv[new_type]))
-           mp_to_lv[type] = mp_to_lv[new_type]
-           type_ptr = '%s *' % type
-           new_type_ptr = '%s *' % new_type
-           if new_type_ptr in mp_to_lv:
-               mp_to_lv[type_ptr] = mp_to_lv[new_type_ptr]
-           if new_type in lv_to_mp:
-               lv_to_mp[type] = lv_to_mp[new_type]
-               lv_mp_type[type] = lv_mp_type[new_type]
-               if new_type in lv_to_mp_funcptr:
-                   lv_to_mp_funcptr[type] = lv_to_mp_funcptr[new_type]
-               if new_type in lv_to_mp_byref:
-                   lv_to_mp_byref[type] = lv_to_mp_byref[new_type]
-               if new_type_ptr in lv_to_mp:
-                   lv_to_mp[type_ptr] = lv_to_mp[new_type_ptr]
-               if new_type_ptr in lv_mp_type:
-                   lv_mp_type[type_ptr] = lv_mp_type[new_type_ptr]
+           clone_type(type, new_type)
            # eprint('/* --> %s = (%s) */' % (type, new_type))
            return mp_to_lv[type] 
     return None
@@ -2015,7 +2070,7 @@ def gen_mp_func(func, obj_name):
         if return_type not in lv_to_mp or not lv_to_mp[return_type]:
             try_generate_type(func.type.type)
             if return_type not in lv_to_mp or not lv_to_mp[return_type]:
-                raise MissingConversionException("Missing convertion from %s" % return_type)
+                raise MissingConversionException("Missing conversion from %s" % return_type)
         build_result = "%s _res = " % qualified_return_type
         cast = '(void*)' if isinstance(func.type.type, c_ast.PtrDecl) else '' # needed when field is const. casting to void overrides it
         build_return_value = "{type}({cast}_res)".format(type = lv_to_mp[return_type], cast = cast)
@@ -2049,8 +2104,8 @@ STATIC mp_obj_t mp_{func}(size_t mp_n_args, const mp_obj_t *mp_args, void *lv_fu
 
     emit_func_obj(func.name, func.name, param_count, func.name, is_static_member(func, base_obj_type))
     generated_funcs[func.name] = True # completed generating the function
-    # print('/* is_struct_function() = %s, is_static_member() = %s, get_first_arg_type()=%s, obj_name = %s */' % (
-    #    is_struct_function(func), is_static_member(func, base_obj_type), get_first_arg_type(func), base_obj_type))
+    # print('/* is_struct_function() = %s, is_static_member() = %s, get_first_arg_type()=%s, obj_name = %s : %s */' % (
+    #   is_struct_function(func), is_static_member(func, base_obj_type), get_first_arg_type(func), base_obj_type, func))
 
 
 
@@ -2236,12 +2291,12 @@ def try_generate_structs_from_first_argument():
 def gen_global(global_name, global_type_ast):
     global_type = get_type(global_type_ast, remove_quals=True)
     generated_global = try_generate_type(global_type_ast)
-    # print("/* generated_global = %s */" % generated_global)
+    eprint("/* generated_global = %s */" % generated_global)
     if global_type not in generated_structs:
         wrapped_type = lv_mp_type[global_type]
         if not wrapped_type:
             raise MissingConversionException('Missing conversion to %s when generating global %s' % (wrapped_type, global_name))
-        global_type = sanitize("_lv_mp_%s_wrapper" % wrapped_type)
+        global_type = sanitize("lv_mp_%s_wrapper" % wrapped_type)
         custom_struct_str = """
 typedef struct {{
     {type} value;
